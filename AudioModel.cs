@@ -29,6 +29,8 @@ public sealed class Entry
         }
     }
 
+    public bool Muted => IsMaster && Endpoint!.Mute;
+
     public void Nudge(float delta)
     {
         float v = Math.Clamp(Volume + delta, 0f, 1f);

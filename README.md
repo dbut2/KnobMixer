@@ -47,6 +47,7 @@ It lives in the system tray (knob icon). Right-click it for **Start with Windows
 - `Controller.cs`: the click / turn / backspace state machine
 - `AudioModel.cs`: per-app volume via [NAudio](https://github.com/naudio/NAudio) (Windows Core Audio sessions)
 - `OverlayWindow.cs`: the no-focus, always-on-top WPF overlay
+- `Theme.cs` / `Icons.cs`: design tokens (flat dark theme, one teal accent) and vector icons
 
 ## License
 
