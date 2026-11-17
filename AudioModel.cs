@@ -51,6 +51,7 @@ public sealed class AudioModel : IDisposable
 {
     MMDeviceEnumerator? _enum;
     MMDevice? _dev;
+    readonly List<MMDevice> _devices = new();
 
     public List<Entry> Refresh()
     {
@@ -63,23 +64,46 @@ public sealed class AudioModel : IDisposable
             new Entry { Name = "Master", IsMaster = true, Endpoint = _dev.AudioEndpointVolume }
         };
 
-        var byPid = new Dictionary<uint, Entry>();
-        var sessions = _dev.AudioSessionManager.Sessions;
-        for (int i = 0; i < sessions.Count; i++)
+        // Apps can be routed to any output device (e.g. a "Game" and a "Chat" headset device),
+        // so gather sessions from every active output, not just the default one. An app playing
+        // on two devices becomes one entry whose slider moves both.
+        var byApp = new Dictionary<string, Entry>();
+        foreach (var dev in _enum.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active))
         {
-            var s = sessions[i];
-            if (s.State == AudioSessionState.AudioSessionStateExpired || s.IsSystemSoundsSession) continue;
-            uint pid = s.GetProcessID;
-            if (!byPid.TryGetValue(pid, out var entry))
+            _devices.Add(dev);
+            var sessions = dev.AudioSessionManager.Sessions;
+            for (int i = 0; i < sessions.Count; i++)
             {
-                var (name, icon) = Describe(pid, s.DisplayName);
-                entry = new Entry { Name = name, Icon = icon };
-                byPid[pid] = entry;
-                list.Add(entry);
+                var s = sessions[i];
+                if (s.State == AudioSessionState.AudioSessionStateExpired || s.IsSystemSoundsSession) continue;
+                uint pid = s.GetProcessID;
+                // One tile per app, not per process: Discord, Chrome etc. run several processes
+                // from the same exe, each with its own audio session.
+                string key = AppKey(pid);
+                if (!byApp.TryGetValue(key, out var entry))
+                {
+                    var (name, icon) = Describe(pid, s.DisplayName);
+                    entry = new Entry { Name = name, Icon = icon };
+                    byApp[key] = entry;
+                    list.Add(entry);
+                }
+                entry.Sessions.Add(s);
             }
-            entry.Sessions.Add(s);
         }
         return list;
+    }
+
+    /// <summary>Executable path identifies the app; falls back to the pid if the path can't be read.</summary>
+    static string AppKey(uint pid)
+    {
+        try
+        {
+            using var p = Process.GetProcessById((int)pid);
+            var path = p.MainModule?.FileName;
+            if (!string.IsNullOrEmpty(path)) return path.ToLowerInvariant();
+        }
+        catch { /* protected or already exited */ }
+        return "pid:" + pid;
     }
 
     static (string, ImageSource?) Describe(uint pid, string sessionName)
@@ -117,6 +141,8 @@ public sealed class AudioModel : IDisposable
 
     public void Dispose()
     {
+        foreach (var d in _devices) d.Dispose();
+        _devices.Clear();
         _dev?.Dispose();
         _enum?.Dispose();
         _dev = null;
