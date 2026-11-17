@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -93,17 +95,45 @@ public sealed class AudioModel : IDisposable
         return list;
     }
 
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool QueryFullProcessImageName(IntPtr h, int flags, StringBuilder sb, ref int size);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+    const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
+    /// <summary>
+    /// Full exe path of a process. Uses the "limited" query right, which still works for protected /
+    /// anti-cheat game processes where Process.MainModule is denied.
+    /// </summary>
+    static string? ProcessPath(uint pid)
+    {
+        var h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, (int)pid);
+        if (h == IntPtr.Zero) return null;
+        try
+        {
+            var sb = new StringBuilder(1024);
+            int n = sb.Capacity;
+            return QueryFullProcessImageName(h, 0, sb, ref n) ? sb.ToString() : null;
+        }
+        finally { CloseHandle(h); }
+    }
+
     /// <summary>Executable path identifies the app; falls back to the pid if the path can't be read.</summary>
     static string AppKey(uint pid)
     {
-        try
-        {
-            using var p = Process.GetProcessById((int)pid);
-            var path = p.MainModule?.FileName;
-            if (!string.IsNullOrEmpty(path)) return path.ToLowerInvariant();
-        }
-        catch { /* protected or already exited */ }
-        return "pid:" + pid;
+        var path = ProcessPath(pid);
+        return string.IsNullOrEmpty(path) ? "pid:" + pid : path.ToLowerInvariant();
+    }
+
+    // Names that say what the runtime is, not what the app is (e.g. Minecraft Java runs as javaw.exe).
+    static bool IsGenericName(string n) =>
+        n.Contains("Java", StringComparison.OrdinalIgnoreCase) || n.Contains("OpenJDK", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>"WardogsClient-Win64-Shipping" -> "WardogsClient" (Unreal Engine style build suffixes).</summary>
+    static string CleanProcessName(string n)
+    {
+        foreach (var suffix in new[] { "-Win64-Shipping", "-Shipping", "-Win64" })
+            if (n.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)) return n[..^suffix.Length];
+        return n;
     }
 
     static (string, ImageSource?) Describe(uint pid, string sessionName)
@@ -113,8 +143,7 @@ public sealed class AudioModel : IDisposable
         try
         {
             using var p = Process.GetProcessById((int)pid);
-            string? path = null;
-            try { path = p.MainModule?.FileName; } catch { /* protected/elevated process */ }
+            string? path = ProcessPath(pid);
             if (path != null)
             {
                 try { name = FileVersionInfo.GetVersionInfo(path).FileDescription ?? ""; } catch { }
@@ -131,9 +160,15 @@ public sealed class AudioModel : IDisposable
                 }
                 catch { }
             }
-            if (string.IsNullOrWhiteSpace(name) && !string.IsNullOrWhiteSpace(sessionName) && !sessionName.StartsWith("@"))
-                name = sessionName;
-            if (string.IsNullOrWhiteSpace(name)) name = p.ProcessName;
+            // Name, best to worst: the exe's own description, the audio session's name, the window title, the process name.
+            string title = "";
+            try { title = p.MainWindowTitle.Trim(); } catch { }
+            if (string.IsNullOrWhiteSpace(name) || IsGenericName(name))
+            {
+                if (!string.IsNullOrWhiteSpace(sessionName) && !sessionName.StartsWith("@")) name = sessionName;
+                else if (title.Length > 0) name = title;
+                else if (string.IsNullOrWhiteSpace(name)) name = CleanProcessName(p.ProcessName);
+            }
         }
         catch { if (string.IsNullOrWhiteSpace(name)) name = string.IsNullOrWhiteSpace(sessionName) ? $"PID {pid}" : sessionName; }
         return (name, icon);
