@@ -4,6 +4,9 @@ Control your Windows volume mixer with a single knob, even inside games.
 
 Built for keyboards with a volume knob (Keychron, etc.). Turn it for global volume as normal. Click it to open a small overlay where you pick an app and turn the knob to change just that app's volume, so you can turn the game up and Discord down without leaving your game.
 
+<img width="550" height="263" alt="image" src="https://github.com/user-attachments/assets/8cf03a43-6816-462b-bdb7-baaebf9a0c56" />
+
+
 ## How it works
 
 | Action | What happens |
